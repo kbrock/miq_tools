@@ -1,0 +1,120 @@
+#/usr/bin/env bash
+
+# determine the jobs that have run
+# either in the queue, or from the logs
+
+# helper function to handle gzip, missing, and plain files
+# outputs as a single stream
+function scat {
+  local DROP GZ REG
+  for i in "$@" ; do
+    if [[ "$i" = *'*'* ]] ; then
+      DROP="$DROP $i"
+    elif [[ "$i" = *.gz ]] ; then
+      GZ="$GZ $i"
+    else
+      REG="$REG $i"
+    fi
+  done
+
+  if [ -z "${GZ}" ] ; then
+    cat ${REG}
+  else
+    cat ${REG} <(gzcat ${GZ})
+  fi
+}
+
+# options: -n (default)
+#
+# sample:
+#
+# ManageIQ::Providers::Vmware::InfraManager::MetricsCollectorWorker
+
+function log_worker_names {
+  scat "$@" |grep ::Runner#g |sed 's/^[^(]*MIQ(\([^)]*\)::Runner#get_message_via_drb).*$/\1/' | sort | uniq | sort -r
+}
+
+# options: -w
+#
+# display workers and their pids
+# changed to display all workers (not just ones that receive messages)
+#
+# sample:
+#
+# ManageIQ::Providers::Vmware::InfraManager::MetricsCollectorWorker 12250
+
+function log_worker_names_pids {
+  # scat "$@" |grep ::Runner#g |sed 's/^[^#]*#\([0-9]*\)[^(]*MIQ(\([^)]*\)::Runner#get_message_via_drb).*$/\2 \1/' | sort | uniq | sort -r
+  scat "$@" |grep ::Runner# |sed 's/^[^#]*#\([0-9]*\)[^(]*MIQ(\([^)]*\)::Runner#.*$/\2 \1/' | sort | uniq | sort -r
+}
+
+# old
+function log_worker_counts {
+  scat "$@" |grep ::Runner#g |sed 's/^[^(]*MIQ(\([^)]*\)::Runner#get_message_via_drb).*$/\1/' | sort | uniq -c| sort -nr
+}
+
+# option: -l (and -c)
+#
+# Output queue name, method name, and count
+# TODO: move count to the end, trim on the :: (?) and setup columns better
+#
+# sample:
+#
+# 1285 vmware ManageIQ::Providers::Vmware::InfraManager::Vm.perf_capture_realtime
+#  244 vmware Storage.perf_capture_hourly
+#  158 vmware ManageIQ::Providers::Vmware::InfraManager::HostEsx.perf_capture_realtime
+
+function log_queue_name_counts {
+  scat "$@" |grep ::Runner#g |sed 's/^.*::Runner#get_message_via_drb.*Ident: \[\([^,]*\)\].*Command: \[\([^,]*\)\].*$/\1 \2/'|sort|uniq -c|sort -k2,2 -k1nr,1
+}
+# options: -q (and -c)
+#
+# Output queue name, method, and count
+# TODO: trim method on ":"
+#
+# sample:
+#
+#  queue_name |              method              | count
+# ------------|----------------------------------|-------
+#  ems_1      | EmsRefresh.refresh               |     1
+#  generic    | MiqEvent.raise_evm_event         |     1
+#  generic    | MiqVimBrokerWorker.reconnect_ems |     1
+
+function queue_queue_name_counts {
+  echo "select queue_name, class_name || '.' || method_name as method, count(*) from miq_queue group by 1,2 order by 1,3 desc;" | psql $@ | sed 's/-+-/-|-/g' # | sed 's/[a-zA-Z0-9]*:://g'
+}
+
+function usage {
+  echo "`basename $0` [-c] [-l] [-q] [-n] [-w] [-p] [logfile names]"
+  echo -e "\t-n worker names              from logs (default option)"
+  echo -e "\t-p worker names and pids     from logs"
+  echo -e "\t-l queue  names (and counts) from logs"
+  echo -e "\t-q queue  names (and counts) from postgres"
+  echo -e "\t-c queue  names (and counts) from logs and postgres"
+}
+
+PGDATABASE=${PGDATABASE-vmdb_production}
+
+while getopts "cd:hlnqwp" opt ; do
+  case $opt in
+     c) LQNC=true ; QQNC=true ;;
+     d) PGDATABASE=${OPTARG} ;;
+     l) LQNC=true ;;
+     n) LWN=true ;;
+     p) LWNP=true ;;
+     q) QQNC=true ;;
+     *) usage ; exit 1 ;;
+  esac
+done
+shift $((OPTIND-1))
+
+LOG_FILES=${@-log/evm.log log/evm.log-2*}
+
+# default to LWN if nothing mentioned
+[ -z "${LQNC}" -a -z "${QQNC}" -a -z "${LWNP}" ] && LWN=true
+
+[ -n "${LWN}"  ] && log_worker_names ${LOG_FILES}
+[ -n "${LWNP}"  ] && log_worker_names_pids ${LOG_FILES}
+[ -n "${LQNC}" ] && log_queue_name_counts ${LOG_FILES}
+[ -n "${LQNC}" -a -n "${QQNC}" ] && echo -e "\n"
+[ -n "${QQNC}" ] && queue_queue_name_counts $PGDATABASE

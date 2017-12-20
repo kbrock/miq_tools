@@ -1,0 +1,95 @@
+#!/usr/bin/env gnuplot -c
+
+# usage: gnuplot infile outfile date_start date_end
+
+# read in through an environment variable
+set title system('echo ${TITLE:-Memory Allocations}')
+
+# input filename is arg1. default: tmp_plot.data
+input=ARG1
+if (input eq "") input="tmp_plot.data"
+# all
+queue_input = substr(input,1,strstrt(input, "evm")-1)."queue".substr(input,strstrt(input, "evm")+3,99)
+# generic
+# session_input = substr(input,1,strstrt(input, "evm")-1)."session".substr(input,strstrt(input, "evm")+3,99)
+capture_input = substr(input,1,strstrt(input, "evm")-1)."capture".substr(input,strstrt(input, "evm")+3,99)
+# metric collector worker
+vm_input = substr(input,1,strstrt(input, "evm")-1)."vm".substr(input,strstrt(input, "evm")+3,99)
+host_input = substr(input,1,strstrt(input, "evm")-1)."host".substr(input,strstrt(input, "evm")+3,99)
+storage_input = substr(input,1,strstrt(input, "evm")-1)."storage".substr(input,strstrt(input, "evm")+3,99)
+message_input = substr(input,1,strstrt(input, "evm")-1)."message".substr(input,strstrt(input, "evm")+3,99)
+# gc_input = substr(input,1,strstrt(input, "evm")-1)."gc".substr(input,strstrt(input, "evm")+3,99)
+
+# output filename is arg2. default input.png
+output=ARG2
+if (ARG2 eq "") output=substr(input,1,strstrt(input, "."))."png"
+set output output
+
+if (strstrt(output,"svg") > 0)  set terminal svg size 1024,768 dynamic font "Helvetica" background rgb "#1f1d1d"
+if (strstrt(output,"svg") == 0) set terminal png size 1024.768         font "Helvetica" background rgb "#1f1d1d"
+# was: set terminal png size 1024.768
+
+set timefmt "%Y-%m-%dT%H:%M:%S"
+# set datafile separator ","
+
+# set nokey
+# set key left top box
+# set key outside right top box
+
+set xlabel "Time"
+set xdata time
+set xtic nomirror # show x tics on bottom
+set mxtic 6 # minor tics every 5 minutes
+unset x2tic
+
+if (ARG3 ne "") set xrange [ARG3 : ARG4]
+set format x "%m/%d\n%H:%M"
+
+# Objects
+set ylabel "Objects"
+set format y "%.1s%c"
+set autoscale y
+set yrange [0: ] # axis start at 0
+set ytics nomirror # show time ticks on left only (don't want to see next to right ticks)
+
+# unset y2tic
+# Memory
+set y2label "Memory"
+set format y2 "%.1s%cb"
+set autoscale y2
+set y2range [0: ]
+set y2tics
+
+# plot
+#    input         using 1:2 t 'PSS'      with lines linecolor rgb "#E24D42" linewidth 1 axes x1y2,
+#    input         using 1:3 t 'RSS'      with lines linecolor rgb "#D57733" linewidth 1 axes x1y2,
+#    input         using 1:4 t 'live'     with points axes x1y1,
+#    gc_input      using 1:6 t 'gc'       with impulses linecolor rgb "#735A1C" linewidth 0.5 axes x1y1,
+
+# "#202D3A" # b
+# "#732722" # r
+# "#735A1C" # y
+# "#6ED0E0" # blue    dk: #386B73
+# "#EAB839" # yellow  dk: #735A1C
+# "#7EB26D" # green   dk: #517346
+# "#E24D42" # red     dk: #732722
+# "#D57733" # orange  dk: #73401B
+
+# 1:time, 2:pss, 3:rss, 4:live objects, 5:old objects, 6:heap_all, 7:live heap slots, 8:gc count
+# evm     - all
+# queue   - entries popped off of queue
+# session - has been resolved/reduced (queue messages for AR sessions)
+# capture - perf capture initiation events (also in queue)
+# gc      - (not always populated) every forced gc (15 minute interval)
+
+plot \
+     queue_input   using 1:6 t 'queue'    with impulses linecolor rgb "#202D3A" linewidth 0.5 axes x1y1, \
+     capture_input using 1:6 t 'capture'  with impulses linecolor rgb "#732722" linewidth 1 axes x1y1, \
+     vm_input      using 1:6 t 'vm'       with impulses linecolor rgb "#732722" linewidth 1 axes x1y1, \
+     storage_input using 1:6 t 'storage'  with impulses linecolor rgb "#E24D42" linewidth 1 axes x1y1, \
+     message_input using 1:6 t 'message'  with impulses linecolor rgb "#735A1C" linewidth 1 axes x1y1, \
+     host_input    using 1:6 t 'host'     with impulses linecolor rgb "#517346" linewidth 1 axes x1y1, \
+     input         using 1:5 t 'old'      with lines    linecolor rgb "#6ED0E0" linewidth 1 axes x1y1, \
+     input         using 1:7 t 'live'     with lines    linecolor rgb "#EAB839" linewidth 1 axes x1y1, \
+     input         using 1:3 t 'RSS'      with lines    linecolor rgb "#D57733" linewidth 1 axes x1y2, \
+     input         using 1:6 t 'all heap' with lines    linecolor rgb "#7EB26D" linewidth 1 axes x1y1,
